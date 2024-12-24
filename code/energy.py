@@ -1,63 +1,75 @@
-#!/usr/bin/python3
-
+import os
+import time
 from urllib.request import Request, urlopen
 from lxml import etree
+from prometheus_client import start_http_server, Gauge
+
+# Prometheus metrics
+total_consumed_metric = Gauge('total_energy_consumed', 'Total energy consumed')
+public_grid_metric = Gauge('energy_from_grid', 'Total energy from grid')
+solar_panel_metric = Gauge('solar_panel_energy', 'Solar panel energy')
+total_excess_metric = Gauge('total_energy_to_grid', 'Total energy exported to grid')
+
+def clear_screen():
+    # Clears the terminal screen (works in most environments)
+    os.system('clear')  # For Linux/Mac; use 'cls' for Windows if needed
 
 def energy():
-  publicGridName = "Total energy from grid"
-  upstairsName = "Home"
-  downstairsName = "Garage"
-  heatPumpCoolingName =  "Heat pump cooling"
-  heatPumpWaterName = "Heat pump water"
-  solarPanelName = "Solar panels"
-  wallBoxName = "Wallbox"
-  burnersName = "Burners"
-  owenName = "Owen"
+    publicGridName = "Total energy from grid"
+    upstairsName = "Home"
+    downstairsName = "Garage"
+    solarPanelName = "Solar panels"
+    wallBoxName = "Wallbox"
 
-  totalConsumedName = "Total energy consumed"
-  totalConsumed = 0
-  totalExcessName = "Total energy to grid"
-  totalExcess = 0
+    totalConsumedName = "Total energy consumed"
+    totalExcessName = "Total energy to grid"
 
-  # Sources from the BTicino Energy Data Logger
-  sources = {
-    publicGridName: 0,
-    upstairsName: 1,
-    downstairsName: 2,
-    #heatPumpCoolingName: 3,
-    #heatPumpWaterName: 4,
-    solarPanelName: 5,
-    wallBoxName: 6,
-    #burnersName: 7,
-    #owenName: 8,
-  }
+    # Sources from the BTicino Energy Data Logger
+    sources = {
+        publicGridName: 0,
+        upstairsName: 1,
+        downstairsName: 2,
+        solarPanelName: 5,
+        wallBoxName: 6,
+    }
 
-  try:
-    values = {}
+    try:
+        values = {}
 
-    for (name, index) in sources.items():
-      page = urlopen(Request(f"http://192.168.0.6/istval_0{index}00.xml", headers={}))
-      page = page.read().decode("utf-8")
-      page = etree.XML(page)
-      values[name] = int(page[1].text) #/ 1000
-      #print(f"{name} {values[name]}")
+        # Clear the screen before printing new data
+        clear_screen()
 
-    totalConsumed = values[downstairsName] + values[upstairsName] + values[wallBoxName]
-    totalExcess = values[solarPanelName] - totalConsumed
+        for (name, index) in sources.items():
+            page = urlopen(Request(f"http://192.168.0.6/istval_0{index}00.xml", headers={}))
+            page = page.read().decode("utf-8")
+            page = etree.XML(page)
+            values[name] = int(page[1].text)  # Read and convert to integer
 
-    if  (totalExcess < 0) :
-      totalExcess = 0
+        total_consumed = values[downstairsName] + values[upstairsName] + values[wallBoxName]
+        total_excess = values[solarPanelName] - total_consumed
 
-    print(f"{totalConsumedName} {totalConsumed}")
-    print(f"{publicGridName} {values[publicGridName]}")
-    print(f"{solarPanelName} {values[solarPanelName]}")
-    print(f"{totalExcessName} {totalExcess}")
+        if total_excess < 0:
+            total_excess = 0
 
-    return
+        # Print the latest data
+        print(f"{totalConsumedName} {total_consumed}")
+        print(f"{publicGridName} {values[publicGridName]}")
+        print(f"{solarPanelName} {values[solarPanelName]}")
+        print(f"{totalExcessName} {total_excess}")
 
-  except Exception as e:
-    print(f"Error in retrieving energy data: {e}")
-    return
+        # Update Prometheus metrics
+        total_consumed_metric.set(total_consumed)
+        public_grid_metric.set(values[publicGridName])
+        solar_panel_metric.set(values[solarPanelName])
+        total_excess_metric.set(total_excess)
+
+    except Exception as e:
+        print(f"Error in retrieving energy data: {e}")
 
 if __name__ == "__main__":
-  energy()
+    # Start the Prometheus metrics server on port 8000
+    start_http_server(8000)
+    print("Starting energy monitoring script...")
+    while True:
+        energy()
+        time.sleep(60)  # Wait 60 seconds between each run
